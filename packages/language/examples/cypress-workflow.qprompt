@@ -1,0 +1,400 @@
+// Full Cypress test-generation agent graph: plan -> validate the plan ->
+// generate code -> lint the code -> run it, with debug/retry loops at
+// each checkpoint. Mirrors a hand-written LangGraph StateGraph pipeline.
+graph: CypressTestGeneration
+
+states:
+
+  // Remark: to rename agent_state instead of global state
+  global_state:
+    failed: false
+    error: null
+    attempts: 0
+    max_attempts: 3
+    phase: null
+
+resources:
+
+  testPlanStrategies:
+    type: knowledge_base
+    paths:
+      - https://martinfowler.com/articles/practical-test-pyramid.html
+      - https://martinfowler.com/bliki/TestStrategy.html
+      - https://en.wikipedia.org/wiki/Boundary-value_analysis
+      - https://en.wikipedia.org/wiki/Equivalence_partitioning
+    rag:
+      loader: web
+      splitter: recursive
+      // Larger chunks -> reasoning over strategy, not code lookup
+      chunk_size: 1000
+      chunk_overlap: 150
+
+      embeddings:
+        provider: huggingface
+        model: sentence-transformers/all-MiniLM-L6-v2
+
+      vector_store:
+        type: faiss
+        persist_path: .rag/test-plan-strategies
+
+      retrieval:
+        strategy: mmr
+        top_k: 2
+
+  cypressDocs:
+    type: knowledge_base
+    paths:
+      - https://docs.cypress.io
+      - https://docs.cypress.io/api
+      - https://docs.cypress.io/guides
+    rag:
+      loader: web
+      splitter: recursive
+      chunk_size: 400
+      chunk_overlap: 50
+
+      embeddings:
+        provider: huggingface
+        model: sentence-transformers/all-MiniLM-L6-v2
+
+      vector_store:
+        type: faiss
+        persist_path: .rag/cypress/docs
+
+      retrieval:
+        strategy: similarity
+        top_k: 4
+
+  cypressBestPractices:
+    type: knowledge_base
+    paths:
+      - https://docs.cypress.io/guides/references/best-practices
+      - https://docs.cypress.io/guides/references/assertions
+      - https://docs.cypress.io/guides/references/trade-offs
+      - https://docs.cypress.io/faq/questions/using-cypress-faq
+    rag:
+      loader: web
+      splitter: recursive
+      // Larger chunks -> conceptual coherence over exact API snippets
+      chunk_size: 800
+      chunk_overlap: 100
+
+      embeddings:
+        provider: huggingface
+        model: sentence-transformers/all-MiniLM-L6-v2
+
+      vector_store:
+        type: faiss
+        persist_path: .rag/cypress/best-practices
+
+      retrieval:
+        strategy: mmr // diversity over precision
+        top_k: 3
+
+  cypressApiDocs:
+    type: knowledge_base
+    paths:
+      - https://docs.cypress.io/api/commands/visit
+      - https://docs.cypress.io/api/commands/get
+    rag:
+      loader: web
+      splitter: recursive
+      chunk_size: 400
+      chunk_overlap: 50
+      embeddings:
+        provider: huggingface
+        model: sentence-transformers/all-MiniLM-L6-v2
+      vector_store:
+        type: faiss
+        persist_path: .rag/cypress/api
+      retrieval:
+        strategy: similarity
+        top_k: 4
+
+  cypressErrorsFaq:
+    type: knowledge_base
+    paths:
+      - https://docs.cypress.io/faq/questions/using-cypress-faq
+    rag:
+      loader: web
+      splitter: recursive
+      chunk_size: 400
+      chunk_overlap: 50
+      embeddings:
+        provider: huggingface
+        model: sentence-transformers/all-MiniLM-L6-v2
+      vector_store:
+        type: faiss
+        persist_path: .rag/cypress/errors-faq
+      retrieval:
+        strategy: similarity
+        top_k: 3
+
+models:
+  qwen3:
+    image: ai/qwen3:14B-Q6_K
+    serving_backend: vllm
+    port: 8080
+
+
+    // Remark: I think this param defined on agent mode: finetuned shoud be on model configs not on agent level
+    // SHoud have possibilty to define propre model funtuned or ollama models, but for the moment use dcoker model runners
+
+agents:
+
+  modelselector:
+    kind: llm
+    description: "Selects which model pool entry each downstream agent uses for this run."
+
+  testplanner:
+    kind: llm
+    model: qwen3
+    description: "Turns the user's request into a plain-English, step-by-step test plan."
+    temperature: 0.0
+    mode: finetuned
+    context:
+      - testPlanStrategies
+    state: global_state
+    prompt: """
+      You are a meticulous test planning expert for {output_format}. Create a
+      detailed, step-by-step, textual plan based solely on the user's request.
+      No code. Use plain English. Follow the request's terminology exactly.
+      Output format:
+        Title: <summary>
+        Objective: <goal>
+        Steps:
+          1. ...
+    """
+
+  planValidator:
+    kind: rules_engine
+    description: "Validates planner output without invoking an LLM."
+    rules:
+      - id: no_code
+        check: not_contain
+        values:
+          - "cy."
+          - "describe("
+          - "it("
+        message: "Planner output contains code."
+      - id: structure
+        check: structure
+        start_with: "Title:"
+        must_contain:
+          - "Steps:"
+        message: "Planner output missing required structure."
+    state: global_state
+    emit_state:
+      on_pass:
+        failed: false
+        phase: "plan"
+      on_fail:
+        failed: true
+        phase: "plan"
+        rule: "$rule.id"
+        reason: "$rule.message"
+
+        // Reamrk: Rule is not defined on agent state
+
+  cygenerator:
+    kind: llm
+    model: qwen3
+    description: "Converts a validated plan into executable Cypress code."
+    mode: lora
+    context:
+      - cypressDocs
+      - cypressBestPractices
+    state: global_state
+    prompt: """
+      You are an expert {output_format} test developer. Convert the provided
+      textual plan into valid, executable, syntactically correct {output_format}
+      code.
+      CRITICAL RULES:
+        - Follow the plan and request precisely.
+        - Use exact selectors if specified.
+        - cy.visit() must be standalone.
+        - Output only code, no explanations.
+    """
+
+  syntaxvalidator:
+    kind: eslint
+    description: "Validates generated Cypress code syntax using ESLint."
+    ruleset: cypress
+    state: global_state
+    emit_state:
+      on_pass:
+        failed: false
+        phase: "lint"
+      on_fail:
+        failed: true
+        phase: "lint"
+        rule: "$eslint.category"
+        details: "$eslint.report"
+
+  cypressExec:
+    kind: executor
+    description: "Executes the generated Cypress test inside Docker."
+    image: cypress/included
+    command: "npx cypress run"
+    state: global_state
+    emit_state:
+      on_pass:
+        failed: false
+        phase: "execution"
+      on_fail:
+        failed: true
+        phase: "execution"
+        details: "$cypress.output"
+
+  cydebugger:
+    kind: llm
+    model: qwen3
+    description: "Repairs a plan or code that failed a downstream checkpoint."
+    mode: finetuned
+    context:
+      - cypressApiDocs
+      - cypressErrorsFaq
+    state: global_state
+    prompt: """
+      You are an expert {output_format} debugger. Given the original request,
+      the current (broken) plan or code, and the failure reason, produce a
+      corrected version using only official Cypress APIs.
+    """
+
+workflows:
+  cypressFlow:
+    channels:
+      given_query: txt
+      test_plan: txt
+      test_script: ts
+      test_results: json
+      artifact: json
+
+    steps:
+      - name: selectTools
+        kind: select
+        agent: modelselector
+
+      - name: planTest
+        kind: plan
+        agent: testplanner
+        subscribe:
+          - given_query
+        publish:
+          - test_plan
+
+      - name: validatePlan
+        kind: validate
+        agent: planValidator
+        subscribe:
+          - test_plan
+        publish:
+          - artifact
+        routes:
+          - if: "state.failed && state.rule == 'no_code'" then: planFix
+          - if: "state.failed" then: planFixDefault
+          - if: "!state.failed" then: genCode
+
+      - name: planFix
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_plan
+          - artifact
+        publish:
+          - test_plan
+        on_complete: planTest
+
+      - name: planFixDefault
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_plan
+          - artifact
+        publish:
+          - test_plan
+        on_complete: planTest
+
+      - name: genCode
+        kind: generate
+        agent: cygenerator
+        subscribe:
+          - test_plan
+        publish:
+          - test_script
+        retry: 3
+
+      - name: lint
+        kind: validate
+        agent: syntaxvalidator
+        subscribe:
+          - test_script
+        publish:
+          - artifact
+        routes:
+          - if: "state.failed && state.rule == 'SYNTAX'" then: debugSyntaxError
+          - if: "state.failed && state.rule == 'STYLE'" then: debugStyleError
+          - if: "!state.failed" then: runTests
+
+      - name: debugSyntaxError
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_script
+          - artifact
+        publish:
+          - test_script
+        on_complete: lint
+
+      - name: debugStyleError
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_script
+          - artifact
+        publish:
+          - test_script
+        on_complete: runTests
+
+      - name: runTests
+        kind: execute
+        agent: cypressExec
+        subscribe:
+          - test_script
+        publish:
+          - test_results
+          - artifact
+        retry: 3
+        routes:
+          - if: "!state.failed" then: endSuccess
+          - if: "state.failed" then: debugTestFailure
+
+      - name: debugTestFailure
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_script
+          - test_results
+          - artifact
+        publish:
+          - test_script
+        on_complete: genCode
+
+      - name: endSuccess
+        kind: validate
+        agent: planValidator
+        subscribe:
+          - test_results
+          - artifact
+
+    max_loops: 4
+
+tasks:
+  loginTest:
+    workflow: cypressFlow
+    inputs:
+      given_query: "Write a Cypress test for login page"
+    outputs:
+      test_plan: memory
+      test_script: tests/login.cy.js
+      test_results: reports/test.log

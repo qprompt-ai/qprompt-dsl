@@ -1,0 +1,16 @@
+{
+    "projectName": "Qprompt",
+    "languages": [
+        {
+            "id": "qprompt",
+            "grammar": "src/qprompt.langium",
+            "fileExtensions": [
+                "qprompt"
+            ],
+            "textMate": {
+                "out": "syntaxes/qprompt.tmLanguage.json"
+            }
+        }
+    ],
+    "out": "src/generated"
+}
