@@ -1,0 +1,651 @@
+{
+  "irVersion": "1.0.0",
+  "graph": "CypressTestGeneration",
+  "states": [
+    {
+      "name": "agent_state",
+      "fields": [
+        {
+          "name": "failed",
+          "optional": false,
+          "value": false
+        },
+        {
+          "name": "error",
+          "optional": false,
+          "value": null
+        },
+        {
+          "name": "phase",
+          "optional": false,
+          "value": null
+        },
+        {
+          "name": "details",
+          "optional": true,
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "validation_state",
+      "fields": [
+        {
+          "name": "rule",
+          "optional": true,
+          "value": null
+        },
+        {
+          "name": "reason",
+          "optional": true,
+          "value": null
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "name": "testPlanStrategies",
+      "type": "knowledge_base",
+      "paths": [
+        "https://martinfowler.com/articles/practical-test-pyramid.html",
+        "https://martinfowler.com/bliki/TestStrategy.html",
+        "https://en.wikipedia.org/wiki/Boundary-value_analysis",
+        "https://en.wikipedia.org/wiki/Equivalence_partitioning"
+      ],
+      "rag": {
+        "loader": "web",
+        "splitter": "recursive",
+        "chunkSize": 1000,
+        "chunkOverlap": 150,
+        "embeddings": {
+          "provider": "huggingface",
+          "model": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        "vectorStore": {
+          "type": "faiss",
+          "persistPath": ".rag/test-plan-strategies"
+        },
+        "retrieval": {
+          "strategy": "mmr",
+          "topK": 2
+        }
+      }
+    },
+    {
+      "name": "cypressDocs",
+      "type": "knowledge_base",
+      "paths": [
+        "https://docs.cypress.io",
+        "https://docs.cypress.io/api",
+        "https://docs.cypress.io/guides"
+      ],
+      "rag": {
+        "loader": "web",
+        "splitter": "recursive",
+        "chunkSize": 400,
+        "chunkOverlap": 50,
+        "embeddings": {
+          "provider": "huggingface",
+          "model": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        "vectorStore": {
+          "type": "faiss",
+          "persistPath": ".rag/cypress/docs"
+        },
+        "retrieval": {
+          "strategy": "similarity",
+          "topK": 4
+        }
+      }
+    },
+    {
+      "name": "cypressBestPractices",
+      "type": "knowledge_base",
+      "paths": [
+        "https://docs.cypress.io/guides/references/best-practices",
+        "https://docs.cypress.io/guides/references/assertions",
+        "https://docs.cypress.io/guides/references/trade-offs",
+        "https://docs.cypress.io/faq/questions/using-cypress-faq"
+      ],
+      "rag": {
+        "loader": "web",
+        "splitter": "recursive",
+        "chunkSize": 800,
+        "chunkOverlap": 100,
+        "embeddings": {
+          "provider": "huggingface",
+          "model": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        "vectorStore": {
+          "type": "faiss",
+          "persistPath": ".rag/cypress/best-practices"
+        },
+        "retrieval": {
+          "strategy": "mmr",
+          "topK": 3
+        }
+      }
+    },
+    {
+      "name": "cypressApiDocs",
+      "type": "knowledge_base",
+      "paths": [
+        "https://docs.cypress.io/api/commands/visit",
+        "https://docs.cypress.io/api/commands/get"
+      ],
+      "rag": {
+        "loader": "web",
+        "splitter": "recursive",
+        "chunkSize": 400,
+        "chunkOverlap": 50,
+        "embeddings": {
+          "provider": "huggingface",
+          "model": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        "vectorStore": {
+          "type": "faiss",
+          "persistPath": ".rag/cypress/api"
+        },
+        "retrieval": {
+          "strategy": "similarity",
+          "topK": 4
+        }
+      }
+    },
+    {
+      "name": "cypressErrorsFaq",
+      "type": "knowledge_base",
+      "paths": [
+        "https://docs.cypress.io/faq/questions/using-cypress-faq"
+      ],
+      "rag": {
+        "loader": "web",
+        "splitter": "recursive",
+        "chunkSize": 400,
+        "chunkOverlap": 50,
+        "embeddings": {
+          "provider": "huggingface",
+          "model": "sentence-transformers/all-MiniLM-L6-v2"
+        },
+        "vectorStore": {
+          "type": "faiss",
+          "persistPath": ".rag/cypress/errors-faq"
+        },
+        "retrieval": {
+          "strategy": "similarity",
+          "topK": 3
+        }
+      }
+    }
+  ],
+  "models": [
+    {
+      "name": "qwen3_finetuned",
+      "model": "ai/qwen3:14B-Q6_K-finetuned",
+      "contextSize": 8192,
+      "runtimeFlags": []
+    },
+    {
+      "name": "qwen3_lora",
+      "model": "ai/qwen3:14B-Q6_K-lora",
+      "contextSize": 8192,
+      "runtimeFlags": []
+    }
+  ],
+  "agents": [
+    {
+      "name": "testplanner",
+      "kind": "llm",
+      "description": "Turns the user's request into a plain-English, step-by-step test plan.",
+      "input": true,
+      "output": true,
+      "model": "qwen3_finetuned",
+      "temperature": 0,
+      "context": [
+        "testPlanStrategies"
+      ],
+      "state": [
+        "agent_state"
+      ],
+      "prompt": "\n      You are a meticulous test planning expert for cypress. Create a\n      detailed, step-by-step, textual plan based solely on the user's request.\n      No code. Use plain English. Follow the request's terminology exactly.\n      Output format:\n        Title: <summary>\n        Objective: <goal>\n        Steps:\n          1. ...\n    ",
+      "mounts": [],
+      "env": [],
+      "rules": [],
+      "candidateModels": []
+    },
+    {
+      "name": "planValidator",
+      "kind": "rules_engine",
+      "description": "Validates planner output without invoking an LLM.",
+      "input": true,
+      "output": false,
+      "context": [],
+      "state": [
+        "agent_state",
+        "validation_state"
+      ],
+      "mounts": [],
+      "env": [],
+      "rules": [
+        {
+          "id": "no_code",
+          "check": "not_contain",
+          "mustContain": [],
+          "values": [
+            "cy.",
+            "describe(",
+            "it("
+          ],
+          "message": "Planner output contains code."
+        },
+        {
+          "id": "structure",
+          "check": "structure",
+          "startWith": "Title:",
+          "mustContain": [
+            "Steps:"
+          ],
+          "values": [],
+          "message": "Planner output missing required structure."
+        }
+      ],
+      "emitState": {
+        "onPass": {
+          "failed": false,
+          "phase": "plan"
+        },
+        "onFail": {
+          "failed": true,
+          "phase": "plan",
+          "rule": "$rule.id",
+          "reason": "$rule.message"
+        }
+      },
+      "candidateModels": []
+    },
+    {
+      "name": "cygenerator",
+      "kind": "llm",
+      "description": "Converts a validated plan into executable Cypress code.",
+      "input": true,
+      "output": true,
+      "model": "qwen3_lora",
+      "context": [
+        "cypressDocs",
+        "cypressBestPractices"
+      ],
+      "state": [
+        "agent_state"
+      ],
+      "prompt": "\n      You are an expert cypress test developer. Convert the provided\n      textual plan into valid, executable, syntactically correct {output_format}\n      code.\n      CRITICAL RULES:\n        - Follow the plan and request precisely.\n        - Use exact selectors if specified.\n        - cy.visit() must be standalone.\n        - Begin the file with: /// <reference types=\"cypress\" />\n        - Output only code, no explanations.\n    ",
+      "mounts": [],
+      "env": [],
+      "rules": [],
+      "candidateModels": []
+    },
+    {
+      "name": "cypressApiValidator",
+      "kind": "rules_engine",
+      "description": "Rejects generated code that uses Playwright/WebDriver-style APIs instead of Cypress.",
+      "input": true,
+      "output": false,
+      "context": [],
+      "state": [
+        "agent_state",
+        "validation_state"
+      ],
+      "mounts": [],
+      "env": [],
+      "rules": [
+        {
+          "id": "no_foreign_apis",
+          "check": "not_contain",
+          "mustContain": [],
+          "values": [
+            "page.",
+            "browser.",
+            "await ",
+            "chromium",
+            "firefox",
+            "webkit",
+            "playwright"
+          ],
+          "message": "Generated code uses non-Cypress (Playwright/WebDriver-style) APIs."
+        }
+      ],
+      "emitState": {
+        "onPass": {
+          "failed": false,
+          "phase": "cypress_api_check"
+        },
+        "onFail": {
+          "failed": true,
+          "phase": "cypress_api_check",
+          "rule": "NON_CYPRESS_API",
+          "reason": "$rule.message"
+        }
+      },
+      "candidateModels": []
+    },
+    {
+      "name": "syntaxvalidator",
+      "kind": "container",
+      "description": "Validates generated Cypress code with TypeScript and ESLint via the cypress-validator image (github.com/.../syntax-validator).",
+      "input": true,
+      "output": false,
+      "context": [],
+      "state": [
+        "agent_state",
+        "validation_state"
+      ],
+      "image": "cypress-validator",
+      "command": "",
+      "mounts": [],
+      "env": [],
+      "rules": [],
+      "emitState": {
+        "onPass": {
+          "failed": false,
+          "phase": "lint"
+        },
+        "onFail": {
+          "failed": true,
+          "phase": "lint",
+          "rule": "$report.failureCategory",
+          "details": "$report.categories"
+        }
+      },
+      "candidateModels": []
+    },
+    {
+      "name": "cypressExec",
+      "kind": "container",
+      "description": "Executes the generated Cypress test inside Docker.",
+      "input": true,
+      "output": true,
+      "context": [],
+      "state": [
+        "agent_state"
+      ],
+      "image": "cypress/included",
+      "command": "npx cypress run",
+      "mounts": [],
+      "env": [],
+      "rules": [],
+      "emitState": {
+        "onPass": {
+          "failed": false,
+          "phase": "execution"
+        },
+        "onFail": {
+          "failed": true,
+          "phase": "execution",
+          "details": "$cypress.output"
+        }
+      },
+      "candidateModels": []
+    },
+    {
+      "name": "cydebugger",
+      "kind": "llm",
+      "description": "Repairs a plan or code that failed a downstream checkpoint.",
+      "input": true,
+      "output": true,
+      "model": "qwen3_finetuned",
+      "context": [
+        "cypressApiDocs",
+        "cypressErrorsFaq"
+      ],
+      "state": [
+        "agent_state"
+      ],
+      "prompt": "\n      You are an expert cypress debugger. Given the original request,\n      the current (broken) plan or code, and the failure reason, produce a\n      corrected version using only official Cypress APIs.\n    ",
+      "mounts": [],
+      "env": [],
+      "rules": [],
+      "candidateModels": []
+    }
+  ],
+  "workflows": [
+    {
+      "name": "cypressFlow",
+      "channels": [
+        {
+          "name": "given_query",
+          "type": "txt"
+        },
+        {
+          "name": "test_plan",
+          "type": "txt"
+        },
+        {
+          "name": "test_script",
+          "type": "ts"
+        },
+        {
+          "name": "test_results",
+          "type": "json"
+        }
+      ],
+      "steps": [
+        {
+          "name": "planTest",
+          "kind": "plan",
+          "agent": "testplanner",
+          "subscribe": [
+            "given_query"
+          ],
+          "publish": [
+            "test_plan"
+          ],
+          "routes": []
+        },
+        {
+          "name": "validatePlan",
+          "kind": "validate",
+          "agent": "planValidator",
+          "subscribe": [
+            "test_plan"
+          ],
+          "publish": [],
+          "routes": [
+            {
+              "condition": "state.failed && state.rule == 'no_code'",
+              "target": "planFix"
+            },
+            {
+              "condition": "state.failed",
+              "target": "planFixDefault"
+            },
+            {
+              "condition": "!state.failed",
+              "target": "genCode"
+            }
+          ]
+        },
+        {
+          "name": "planFix",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_plan"
+          ],
+          "publish": [
+            "test_plan"
+          ],
+          "onComplete": "planTest",
+          "routes": []
+        },
+        {
+          "name": "planFixDefault",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_plan"
+          ],
+          "publish": [
+            "test_plan"
+          ],
+          "onComplete": "planTest",
+          "routes": []
+        },
+        {
+          "name": "genCode",
+          "kind": "generate",
+          "agent": "cygenerator",
+          "subscribe": [
+            "test_plan"
+          ],
+          "publish": [
+            "test_script"
+          ],
+          "retry": 3,
+          "routes": []
+        },
+        {
+          "name": "checkCypressApi",
+          "kind": "validate",
+          "agent": "cypressApiValidator",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [],
+          "routes": [
+            {
+              "condition": "state.failed",
+              "target": "debugNonCypressApi"
+            },
+            {
+              "condition": "!state.failed",
+              "target": "lint"
+            }
+          ]
+        },
+        {
+          "name": "debugNonCypressApi",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [
+            "test_script"
+          ],
+          "onComplete": "checkCypressApi",
+          "routes": []
+        },
+        {
+          "name": "lint",
+          "kind": "validate",
+          "agent": "syntaxvalidator",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [],
+          "routes": [
+            {
+              "condition": "state.failed && state.rule == 'SYNTAX'",
+              "target": "debugSyntaxError"
+            },
+            {
+              "condition": "state.failed && state.rule == 'STYLE'",
+              "target": "debugStyleError"
+            },
+            {
+              "condition": "!state.failed",
+              "target": "runTests"
+            }
+          ]
+        },
+        {
+          "name": "debugSyntaxError",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [
+            "test_script"
+          ],
+          "onComplete": "lint",
+          "routes": []
+        },
+        {
+          "name": "debugStyleError",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [
+            "test_script"
+          ],
+          "onComplete": "runTests",
+          "routes": []
+        },
+        {
+          "name": "runTests",
+          "kind": "execute",
+          "agent": "cypressExec",
+          "subscribe": [
+            "test_script"
+          ],
+          "publish": [
+            "test_results"
+          ],
+          "retry": 3,
+          "routes": [
+            {
+              "condition": "!state.failed",
+              "target": "endSuccess"
+            },
+            {
+              "condition": "state.failed",
+              "target": "debugTestFailure"
+            }
+          ]
+        },
+        {
+          "name": "debugTestFailure",
+          "kind": "debug",
+          "agent": "cydebugger",
+          "subscribe": [
+            "test_script",
+            "test_results"
+          ],
+          "publish": [
+            "test_script"
+          ],
+          "onComplete": "genCode",
+          "routes": []
+        },
+        {
+          "name": "endSuccess",
+          "kind": "validate",
+          "subscribe": [
+            "test_results"
+          ],
+          "publish": [],
+          "routes": []
+        }
+      ],
+      "loopOnFail": [],
+      "maxLoops": 4
+    }
+  ],
+  "tasks": [
+    {
+      "name": "loginTest",
+      "workflow": "cypressFlow",
+      "inputs": {
+        "given_query": "Write a Cypress test for login page"
+      },
+      "outputs": {
+        "test_plan": "memory",
+        "test_script": "tests/login.cy.ts",
+        "test_results": "reports/test.log"
+      }
+    }
+  ]
+}
