@@ -1,17 +1,23 @@
 // Full Cypress test-generation agent graph: plan -> validate the plan ->
-// generate code -> lint the code -> run it, with debug/retry loops at
-// each checkpoint. Mirrors a hand-written LangGraph StateGraph pipeline.
+// generate code -> reject non-Cypress APIs
+// -> lint the code -> run it, with debug/retry loops at each checkpoint.
+// Mirrors a hand-written LangGraph StateGraph pipeline.
 graph: CypressTestGeneration
 
 states:
 
-  // Remark: to rename agent_state instead of global state
-  global_state:
+  // Shared by every agent for overall pipeline control (routing).
+  agent_state:
     failed: false
     error: null
-    attempts: 0
-    max_attempts: 3
     phase: null
+    details?: null
+
+  // Used only by validator-kind agents (planValidator, syntaxvalidator),
+  // in addition to agent_state — they associate with both, so they get
+  validation_state:
+    rule?: null
+    reason?: null
 
 resources:
 
@@ -131,32 +137,39 @@ resources:
         top_k: 3
 
 models:
-  qwen3:
+  // `mode` (finetuned/lora/base) describes which checkpoint a docker
+  // model runner serves, so it belongs here, not on each agent that
+  // happens to use it — a separate Model entry per checkpoint/port also
+  // lets different agents pick different variants of the same base
+  // model. (Only docker-served models for now; ollama/other runtime
+  // selection is future work.)
+  qwen3_finetuned:
     image: ai/qwen3:14B-Q6_K
     serving_backend: vllm
     port: 8080
+    mode: finetuned
 
-
-    // Remark: I think this param defined on agent mode: finetuned shoud be on model configs not on agent level
-    // SHoud have possibilty to define propre model funtuned or ollama models, but for the moment use dcoker model runners
+  qwen3_lora:
+    image: ai/qwen3:14B-Q6_K
+    serving_backend: vllm
+    port: 8081
+    mode: lora
 
 agents:
 
-  modelselector:
-    kind: llm
-    description: "Selects which model pool entry each downstream agent uses for this run."
-
   testplanner:
     kind: llm
-    model: qwen3
+    model: qwen3_finetuned
     description: "Turns the user's request into a plain-English, step-by-step test plan."
+    input: true
+    output: true
+    // Output format text
     temperature: 0.0
-    mode: finetuned
     context:
       - testPlanStrategies
-    state: global_state
+    state: agent_state
     prompt: """
-      You are a meticulous test planning expert for {output_format}. Create a
+      You are a meticulous test planning expert for cypress. Create a
       detailed, step-by-step, textual plan based solely on the user's request.
       No code. Use plain English. Follow the request's terminology exactly.
       Output format:
@@ -169,6 +182,10 @@ agents:
   planValidator:
     kind: rules_engine
     description: "Validates planner output without invoking an LLM."
+    // Takes the plan as input but has no data output of its own — it
+    // only ever reports pass/fail (and why) via emit_state.
+    input: true
+    output: false
     rules:
       - id: no_code
         check: not_contain
@@ -183,7 +200,9 @@ agents:
         must_contain:
           - "Steps:"
         message: "Planner output missing required structure."
-    state: global_state
+    state:
+      - agent_state
+      - validation_state
     emit_state:
       on_pass:
         failed: false
@@ -194,33 +213,72 @@ agents:
         rule: "$rule.id"
         reason: "$rule.message"
 
-        // Reamrk: Rule is not defined on agent state
-
   cygenerator:
     kind: llm
-    model: qwen3
+    model: qwen3_lora
     description: "Converts a validated plan into executable Cypress code."
-    mode: lora
+    input: true
+    output: true
+    // Ouput format code ts
     context:
       - cypressDocs
       - cypressBestPractices
-    state: global_state
+    state: agent_state
     prompt: """
-      You are an expert {output_format} test developer. Convert the provided
+      You are an expert cypress test developer. Convert the provided
       textual plan into valid, executable, syntactically correct {output_format}
       code.
       CRITICAL RULES:
         - Follow the plan and request precisely.
         - Use exact selectors if specified.
         - cy.visit() must be standalone.
+        - Begin the file with: /// <reference types="cypress" />
         - Output only code, no explanations.
     """
 
+  cypressApiValidator:
+    kind: rules_engine
+    description: "Rejects generated code that uses Playwright/WebDriver-style APIs instead of Cypress."
+    input: true
+    output: false
+    rules:
+      - id: no_foreign_apis
+        check: not_contain
+        values:
+          - "page."
+          - "browser."
+          - "await "
+          - "chromium"
+          - "firefox"
+          - "webkit"
+          - "playwright"
+        message: "Generated code uses non-Cypress (Playwright/WebDriver-style) APIs."
+    state:
+      - agent_state
+      - validation_state
+    emit_state:
+      on_pass:
+        failed: false
+        phase: "cypress_api_check"
+      on_fail:
+        failed: true
+        phase: "cypress_api_check"
+        rule: "NON_CYPRESS_API"
+        reason: "$rule.message"
+
   syntaxvalidator:
-    kind: eslint
-    description: "Validates generated Cypress code syntax using ESLint."
-    ruleset: cypress
-    state: global_state
+    // "container": this agent's real work happens by running a tool
+    // (the cypress-validator image, TypeScript + ESLint) inside Docker.
+    kind: container
+    description: "Validates generated Cypress code with TypeScript and ESLint via the cypress-validator image (github.com/.../syntax-validator)."
+    // Only reports pass/fail via emit_state, no data output of its own.
+    input: true
+    output: false
+    image: cypress-validator
+    command: ""
+    state:
+      - agent_state
+      - validation_state
     emit_state:
       on_pass:
         failed: false
@@ -228,15 +286,22 @@ agents:
       on_fail:
         failed: true
         phase: "lint"
-        rule: "$eslint.category"
-        details: "$eslint.report"
+        // Derived by the runtime from the tool's JSON report (see
+        // validation-report.schema.json): "SYNTAX" when
+        // summary.typescriptErrors > 0, else "STYLE" when
+        // summary.eslintErrors/eslintWarnings > 0 — not a literal field
+        // on the report, since the report has no single "category".
+        rule: "$report.failureCategory"
+        details: "$report.categories"
 
   cypressExec:
-    kind: executor
+    kind: container
     description: "Executes the generated Cypress test inside Docker."
+    input: true
+    output: true
     image: cypress/included
     command: "npx cypress run"
-    state: global_state
+    state: agent_state
     emit_state:
       on_pass:
         failed: false
@@ -248,15 +313,16 @@ agents:
 
   cydebugger:
     kind: llm
-    model: qwen3
+    model: qwen3_finetuned
     description: "Repairs a plan or code that failed a downstream checkpoint."
-    mode: finetuned
+    input: true
+    output: true
     context:
       - cypressApiDocs
       - cypressErrorsFaq
-    state: global_state
+    state: agent_state
     prompt: """
-      You are an expert {output_format} debugger. Given the original request,
+      You are an expert cypress debugger. Given the original request,
       the current (broken) plan or code, and the failure reason, produce a
       corrected version using only official Cypress APIs.
     """
@@ -268,13 +334,8 @@ workflows:
       test_plan: txt
       test_script: ts
       test_results: json
-      artifact: json
 
     steps:
-      - name: selectTools
-        kind: select
-        agent: modelselector
-
       - name: planTest
         kind: plan
         agent: testplanner
@@ -288,8 +349,6 @@ workflows:
         agent: planValidator
         subscribe:
           - test_plan
-        publish:
-          - artifact
         routes:
           - if: "state.failed && state.rule == 'no_code'" then: planFix
           - if: "state.failed" then: planFixDefault
@@ -300,7 +359,6 @@ workflows:
         agent: cydebugger
         subscribe:
           - test_plan
-          - artifact
         publish:
           - test_plan
         on_complete: planTest
@@ -310,7 +368,6 @@ workflows:
         agent: cydebugger
         subscribe:
           - test_plan
-          - artifact
         publish:
           - test_plan
         on_complete: planTest
@@ -324,13 +381,29 @@ workflows:
           - test_script
         retry: 3
 
+      - name: checkCypressApi
+        kind: validate
+        agent: cypressApiValidator
+        subscribe:
+          - test_script
+        routes:
+          - if: "state.failed" then: debugNonCypressApi
+          - if: "!state.failed" then: lint
+
+      - name: debugNonCypressApi
+        kind: debug
+        agent: cydebugger
+        subscribe:
+          - test_script
+        publish:
+          - test_script
+        on_complete: checkCypressApi
+
       - name: lint
         kind: validate
         agent: syntaxvalidator
         subscribe:
           - test_script
-        publish:
-          - artifact
         routes:
           - if: "state.failed && state.rule == 'SYNTAX'" then: debugSyntaxError
           - if: "state.failed && state.rule == 'STYLE'" then: debugStyleError
@@ -341,7 +414,6 @@ workflows:
         agent: cydebugger
         subscribe:
           - test_script
-          - artifact
         publish:
           - test_script
         on_complete: lint
@@ -351,7 +423,6 @@ workflows:
         agent: cydebugger
         subscribe:
           - test_script
-          - artifact
         publish:
           - test_script
         on_complete: runTests
@@ -363,7 +434,6 @@ workflows:
           - test_script
         publish:
           - test_results
-          - artifact
         retry: 3
         routes:
           - if: "!state.failed" then: endSuccess
@@ -375,17 +445,16 @@ workflows:
         subscribe:
           - test_script
           - test_results
-          - artifact
         publish:
           - test_script
         on_complete: genCode
 
+      // Terminal marker step: no agent, since there's nothing left to
+      // execute — it just marks which channel holds the final result.
       - name: endSuccess
         kind: validate
-        agent: planValidator
         subscribe:
           - test_results
-          - artifact
 
     max_loops: 4
 
@@ -396,5 +465,5 @@ tasks:
       given_query: "Write a Cypress test for login page"
     outputs:
       test_plan: memory
-      test_script: tests/login.cy.js
+      test_script: tests/login.cy.ts
       test_results: reports/test.log

@@ -15,11 +15,15 @@ graph: LinkingDemo
 states:
   global_state:
     failed: false
+  extra_state:
+    rule?: null
 
 agents:
   testplanner:
     kind: llm
-    state: global_state
+    state:
+      - global_state
+      - extra_state
 
 workflows:
   demoFlow:
@@ -71,7 +75,7 @@ describe('Linking tests', () => {
 
         expect(planTest.agent?.ref?.name).toBe('testplanner');
         expect(lint.onFail?.ref?.name).toBe('planTest');
-        expect(graph.agents[0].state?.ref?.name).toBe('global_state');
+        expect(graph.agents[0].state.map(s => s.ref?.name)).toEqual(['global_state', 'extra_state']);
         expect(planTest.publish[0]?.ref?.name).toBe('test_plan');
         expect(lint.subscribe[0]?.ref?.name).toBe('test_plan');
     });

@@ -61,7 +61,7 @@ graph: Invalid
 
 agents:
   syntaxvalidator:
-    kind: eslint
+    kind: container
     emit_state:
       on_pass:
         failed: false
@@ -94,6 +94,178 @@ resources:
         ).toEqual(
             expect.stringContaining("Specify exactly one of 'path' or 'paths', not both.")
         );
+    });
+
+    test('a step publishing for an output: false agent is rejected', async () => {
+        document = await parse(`
+graph: Invalid
+
+agents:
+  planValidator:
+    kind: rules_engine
+    output: false
+
+workflows:
+  demoFlow:
+    channels:
+      artifact: json
+    steps:
+      - name: validatePlan
+        kind: validate
+        agent: planValidator
+        publish:
+          - artifact
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toEqual(
+            expect.stringContaining("declares output: false, so step 'validatePlan' must not publish to a channel")
+        );
+    });
+
+    test('emit_state assigning an undeclared state field is rejected', async () => {
+        document = await parse(`
+graph: Invalid
+
+states:
+  global_state:
+    failed: false
+
+agents:
+  planValidator:
+    kind: rules_engine
+    state: global_state
+    emit_state:
+      on_pass:
+        failed: false
+      on_fail:
+        failed: true
+        rule: "$rule.id"
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toEqual(
+            expect.stringContaining("No associated state ('global_state') has a field named 'rule'")
+        );
+    });
+
+    test('emit_state fields split across two associated states is accepted', async () => {
+        document = await parse(`
+graph: Valid
+
+states:
+  agent_state:
+    failed: false
+  validation_state:
+    rule?: null
+
+agents:
+  planValidator:
+    kind: rules_engine
+    state:
+      - agent_state
+      - validation_state
+    emit_state:
+      on_pass:
+        failed: false
+      on_fail:
+        failed: true
+        rule: "$rule.id"
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toHaveLength(0);
+    });
+
+    test('selector agent with no candidate_models is rejected', async () => {
+        document = await parse(`
+graph: Invalid
+
+agents:
+  modelselector:
+    kind: selector
+    batch_size: 6
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toEqual(
+            expect.stringContaining("Selector agent 'modelselector' must declare at least one candidate in 'candidate_models'.")
+        );
+    });
+
+    test('schedule trigger with no cron is rejected', async () => {
+        document = await parse(`
+graph: Invalid
+
+workflows:
+  demoFlow:
+    steps:
+      - name: onlyStep
+        kind: plan
+
+tasks:
+  demoTask:
+    workflow: demoFlow
+    trigger:
+      type: schedule
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toEqual(
+            expect.stringContaining("A 'schedule' trigger must set 'cron'.")
+        );
+    });
+
+    test('webhook trigger with no method/path is rejected', async () => {
+        document = await parse(`
+graph: Invalid
+
+workflows:
+  demoFlow:
+    steps:
+      - name: onlyStep
+        kind: plan
+
+tasks:
+  demoTask:
+    workflow: demoFlow
+    trigger:
+      type: webhook
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toEqual(
+            expect.stringContaining("A 'webhook' trigger must set both 'method' and 'path'.")
+        );
+    });
+
+    test('a fully specified schedule trigger is accepted', async () => {
+        document = await parse(`
+graph: Valid
+
+workflows:
+  demoFlow:
+    steps:
+      - name: onlyStep
+        kind: plan
+
+tasks:
+  demoTask:
+    workflow: demoFlow
+    trigger:
+      type: schedule
+      cron: "0 9 * * *"
+`);
+
+        expect(
+            checkDocumentValid(document) || document?.diagnostics?.map(diagnosticToString)?.join('\n')
+        ).toHaveLength(0);
     });
 });
 

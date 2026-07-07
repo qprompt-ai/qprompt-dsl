@@ -1,3 +1,4 @@
+.claude/
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json
@@ -9,3 +10,4 @@ out/
 syntaxes/
 *.tsbuildinfo
 *.vsix
+/generated/
