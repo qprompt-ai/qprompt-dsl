@@ -1,5 +1,5 @@
 import type { ValidationAcceptor, ValidationChecks } from 'langium';
-import type { Agent, EmitState, QpromptAstType, Resource, Step, Trigger, Workflow } from './generated/ast.js';
+import type { Agent, EmitState, Model, QpromptAstType, Resource, Step, Trigger, Workflow } from './generated/ast.js';
 import type { QpromptServices } from './qprompt-module.js';
 
 /**
@@ -14,7 +14,8 @@ export function registerValidationChecks(services: QpromptServices) {
         Resource: validator.checkKnowledgeBaseFieldsExclusive,
         Step: validator.checkStepMatchesAgentIO,
         Agent: validator.checkSelectorHasCandidates,
-        Trigger: validator.checkTriggerHasRequiredFields
+        Trigger: validator.checkTriggerHasRequiredFields,
+        Model: validator.checkDockerModelHasRef
     };
     registry.register(checks, validator);
 }
@@ -93,6 +94,12 @@ export class QpromptValidator {
         }
         if (trigger.type === 'webhook' && (trigger.method === undefined || trigger.path === undefined)) {
             accept('error', "A 'webhook' trigger must set both 'method' and 'path'.", { node: trigger, property: 'type' });
+        }
+    }
+
+    checkDockerModelHasRef(model: Model, accept: ValidationAcceptor): void {
+        if ((model.provider === undefined || model.provider === 'docker') && model.model === undefined) {
+            accept('error', `Model '${model.name}' provisions via Docker Model Runner and must set 'model' (its OCI artifact reference).`, { node: model, property: 'name' });
         }
     }
 

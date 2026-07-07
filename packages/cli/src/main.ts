@@ -3,7 +3,7 @@ import { createQpromptServices, QpromptLanguageMetaData } from 'qprompt-language
 import chalk from 'chalk';
 import { Command } from 'commander';
 import { extractAstNode } from './util.js';
-import { generateJsonDump } from './generator.js';
+import { generateIR } from './ir.js';
 import { NodeFileSystem } from 'langium/node';
 import * as url from 'node:url';
 import * as fs from 'node:fs/promises';
@@ -16,8 +16,8 @@ const packageContent = await fs.readFile(packagePath, 'utf-8');
 export const generateAction = async (fileName: string, opts: GenerateOptions): Promise<void> => {
     const services = createQpromptServices(NodeFileSystem).Qprompt;
     const model = await extractAstNode<Graph>(fileName, services);
-    const generatedFilePath = generateJsonDump(model, fileName, opts.destination);
-    console.log(chalk.green(`Graph JSON generated successfully: ${generatedFilePath}`));
+    const generatedFilePath = generateIR(model, fileName, opts.destination);
+    console.log(chalk.green(`IR generated successfully: ${generatedFilePath}`));
 };
 
 export type GenerateOptions = {
@@ -34,7 +34,7 @@ export default function(): void {
         .command('generate')
         .argument('<file>', `source file (possible file extensions: ${fileExtensions})`)
         .option('-d, --destination <dir>', 'destination directory of generating')
-        .description('parses and validates a qprompt graph, then dumps the resulting AST as JSON')
+        .description('parses and validates a qprompt graph, then emits its IR as JSON (see schema/qprompt-ir.schema.json)')
         .action(generateAction);
 
     program.parse(process.argv);

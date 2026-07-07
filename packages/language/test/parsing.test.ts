@@ -46,9 +46,8 @@ resources:
 
 models:
   qwen3:
-    image: ai/qwen3:14B-Q6_K
-    serving_backend: vllm // comment on the same line
-    port: 8080
+    model: ai/qwen3:14B-Q6_K // comment on the same line
+    context_size: 4096
 
 agents:
 

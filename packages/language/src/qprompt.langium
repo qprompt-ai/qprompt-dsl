@@ -130,25 +130,37 @@ RetrievalStrategy returns string:
 // ----------------
 // Models
 // ----------------
+// `provider: docker` (the default when omitted) mirrors Docker
+// Compose's top-level `models:` provisioning block (docs.docker.com/
+// ai/compose/models-and-compose) field-for-field, so a Model entry maps
+// directly onto a compose model entry with no invented fields to
+// translate: `model:` is the OCI artifact reference (e.g.
+// ai/qwen3:14B-Q6_K — the tag itself, not a separate field, is how two
+// variants of a base model, like a finetuned vs. a lora checkpoint, are
+// distinguished), `context_size:`/`runtime_flags:` are passed straight
+// through to the inference engine Docker Model Runner starts for it.
+// Docker Model Runner owns the endpoint/port entirely — there's no
+// port/serving_backend/GPU field to declare here, since compose injects
+// an endpoint URL into whichever *service* references this model, not
+// into the model declaration itself.
+//
+// `provider: local` is reserved for a non-containerized runtime (e.g.
+// an already-running Ollama on the host) — not implemented yet
+// (checkDockerModelHasRef only validates the docker case), but the
+// field exists now so declaring one doesn't require a grammar change
+// later, only filling in its actual fields when that work happens.
 Model:
     name=ID ':' NL+ INDENT NL*
         (
-              'image:' image=Scalar NL*
-            | 'serving_backend:' servingBackend=ServingBackend NL*
-            | 'port:' port=NUMBER NL*
-            | 'gpu_memory_utilization:' gpuMemoryUtilization=NUMBER NL*
-            | 'quantization:' quantization=Scalar NL*
-            | 'temperature:' temperature=NUMBER NL*
-            | 'max_tokens:' maxTokens=NUMBER NL*
-            | 'mode:' mode=LlmMode NL*
+              'provider:' provider=ModelProvider NL*
+            | 'model:' model=Scalar NL*
+            | 'context_size:' contextSize=NUMBER NL*
+            | 'runtime_flags:' NL+ INDENT NL* ('-' runtimeFlags+=STRING NL*)* DEDENT
         )*
     DEDENT;
 
-ServingBackend returns string:
-    'vllm' | 'llama-cpp' | 'tgi' | ID;
-
-LlmMode returns string:
-    'base' | 'finetuned' | 'lora' | 'quantized' | ID;
+ModelProvider returns string:
+    'docker' | 'local' | ID;
 
 // ----------------
 // Agents
@@ -172,7 +184,6 @@ Agent:
             | 'output:' output=BooleanLiteral NL*
             | 'model:' model=[Model:ID] NL*
             | 'temperature:' temperature=NUMBER NL*
-            | 'mode:' mode=LlmMode NL*
             | 'context:' NL+ INDENT NL* ('-' context+=[Resource:ID] NL*)* DEDENT
             // An agent can associate with one state (shorthand) or several
             // (list form) — e.g. a validator reading shared pipeline

@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qprompt.dev/schema/qprompt-ir.schema.json",
+  "title": "QpromptIR",
+  "description": "Language-agnostic intermediate representation of a qprompt Graph. This is the contract between qprompt-dsl (producer, via `qprompt-cli generate --format ir`) and any downstream codegen repo (e.g. qprompt-langgraph). It intentionally drops all Langium/AST-internal fields ($container, $cstNode, $document, $type) and resolves every cross-reference to the plain name string it points at.",
+  "type": "object",
+  "required": ["irVersion", "graph", "states", "resources", "models", "agents", "workflows", "tasks"],
+  "additionalProperties": false,
+  "properties": {
+    "irVersion": {
+      "type": "string",
+      "description": "Semver of this IR shape, independent of qprompt-dsl's own package version. Bump the major version on any breaking change to this schema.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "graph": { "type": "string", "description": "The `graph: <name>` identifier." },
+    "states": { "type": "array", "items": { "$ref": "#/$defs/State" } },
+    "resources": { "type": "array", "items": { "$ref": "#/$defs/Resource" } },
+    "models": { "type": "array", "items": { "$ref": "#/$defs/Model" } },
+    "agents": { "type": "array", "items": { "$ref": "#/$defs/Agent" } },
+    "workflows": { "type": "array", "items": { "$ref": "#/$defs/Workflow" } },
+    "tasks": { "type": "array", "items": { "$ref": "#/$defs/Task" } }
+  },
+  "$defs": {
+    "ScalarValue": {
+      "description": "A StateField value. Unlike every other scalar in this schema, JSON `null` here is a real value (the DSL's bare `null` literal) rather than 'field absent'.",
+      "type": ["string", "number", "boolean", "null"]
+    },
+    "State": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/StateField" } }
+      }
+    },
+    "StateField": {
+      "type": "object",
+      "required": ["name", "optional", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "optional": { "type": "boolean" },
+        "value": { "$ref": "#/$defs/ScalarValue" }
+      }
+    },
+    "RagConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loader": { "type": "string" },
+        "splitter": { "type": "string" },
+        "chunkSize": { "type": "integer" },
+        "chunkOverlap": { "type": "integer" },
+        "embeddings": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": "string" },
+            "model": { "type": "string" }
+          }
+        },
+        "vectorStore": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string" },
+            "persistPath": { "type": "string" }
+          }
+        },
+        "retrieval": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "strategy": { "type": "string" },
+            "topK": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "Resource": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "description": "knowledge_base | database | api_endpoint | rule_set | file_system | <custom>" },
+        "path": { "type": "string" },
+        "paths": { "type": "array", "items": { "type": "string" } },
+        "rag": { "$ref": "#/$defs/RagConfig" },
+        "host": { "type": "string" },
+        "port": { "type": "integer" },
+        "dbName": { "type": "string", "description": "Source `name:` field inside a resource block (renamed to avoid colliding with the resource's own identifier)." },
+        "user": { "type": "string" },
+        "baseUrl": { "type": "string" },
+        "token": { "type": "string" },
+        "credential": { "type": "string", "description": "Name of an env var / secrets-vault key to resolve at runtime — never a literal secret." }
+      }
+    },
+    "Model": {
+      "type": "object",
+      "required": ["name", "runtimeFlags"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "provider": { "type": "string", "description": "docker | local | <custom>" },
+        "model": { "type": "string", "description": "OCI artifact reference, e.g. ai/qwen3:14B-Q6_K." },
+        "contextSize": { "type": "integer" },
+        "runtimeFlags": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Mount": {
+      "type": "object",
+      "required": ["local"],
+      "additionalProperties": false,
+      "properties": {
+        "local": { "type": "string" },
+        "container": { "type": "string" }
+      }
+    },
+    "EnvVar": {
+      "type": "object",
+      "required": ["name", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    },
+    "Rule": {
+      "type": "object",
+      "required": ["id", "mustContain", "values"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "check": { "type": "string" },
+        "field": { "type": "string" },
+        "pattern": { "type": "string" },
+        "startWith": { "type": "string" },
+        "mustContain": { "type": "array", "items": { "type": "string" } },
+        "values": { "type": "array", "items": { "type": "string" } },
+        "message": { "type": "string" }
+      }
+    },
+    "StateAssignment": {
+      "type": "object",
+      "additionalProperties": { "type": ["string", "number", "boolean"] },
+      "description": "Map of state field name -> literal value assigned on pass/fail. May reference upstream data via `$rule.<field>` / `$report.<field>` / `$cypress.<field>` string placeholders resolved by the runtime, not by codegen."
+    },
+    "EmitState": {
+      "type": "object",
+      "required": ["onPass", "onFail"],
+      "additionalProperties": false,
+      "properties": {
+        "onPass": { "$ref": "#/$defs/StateAssignment" },
+        "onFail": { "$ref": "#/$defs/StateAssignment" }
+      }
+    },
+    "Agent": {
+      "type": "object",
+      "required": ["name", "context", "state", "env", "mounts", "rules", "candidateModels"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "type": "string", "description": "llm | container | process | db | http | rules_engine | selector | <custom>" },
+        "description": { "type": "string" },
+        "input": { "type": "boolean" },
+        "output": { "type": "boolean" },
+        "model": { "type": "string", "description": "Name of a Model." },
+        "temperature": { "type": "number" },
+        "context": { "type": "array", "items": { "type": "string" }, "description": "Names of Resources." },
+        "state": { "type": "array", "items": { "type": "string" }, "description": "Names of States this agent reads/writes." },
+        "prompt": { "type": "string" },
+        "image": { "type": "string" },
+        "command": { "type": "string" },
+        "workdir": { "type": "string" },
+        "mounts": { "type": "array", "items": { "$ref": "#/$defs/Mount" } },
+        "env": { "type": "array", "items": { "$ref": "#/$defs/EnvVar" } },
+        "connection": { "type": "string", "description": "Name of a Resource." },
+        "query": { "type": "string" },
+        "toolName": { "type": "string" },
+        "toolConfig": { "type": "string" },
+        "method": { "type": "string" },
+        "url": { "type": "string" },
+        "ruleset": { "type": "string" },
+        "ruleFile": { "type": "string" },
+        "policyRef": { "type": "string", "description": "Name of a Resource." },
+        "criteriaFile": { "type": "string" },
+        "min": { "type": "number" },
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/Rule" } },
+        "emitState": { "$ref": "#/$defs/EmitState" },
+        "candidateModels": { "type": "array", "items": { "type": "string" }, "description": "Names of Models." },
+        "batchSize": { "type": "integer" },
+        "scoreThreshold": { "type": "number" }
+      }
+    },
+    "Channel": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string", "description": "txt | json | ts | js | image | embedding | metrics | html | xml | <custom>" },
+        "description": { "type": "string" }
+      }
+    },
+    "Route": {
+      "type": "object",
+      "required": ["condition", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "condition": { "type": "string" },
+        "target": { "type": "string", "description": "Name of a Step." }
+      }
+    },
+    "Step": {
+      "type": "object",
+      "required": ["name", "subscribe", "publish", "routes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "kind": { "type": "string", "description": "select | plan | generate | correct | validate | execute | debug | <custom>" },
+        "agent": { "type": "string", "description": "Name of an Agent. Absent for terminal marker steps." },
+        "subscribe": { "type": "array", "items": { "type": "string" }, "description": "Names of Channels." },
+        "publish": { "type": "array", "items": { "type": "string" }, "description": "Names of Channels." },
+        "onFail": { "type": "string", "description": "Name of a Step." },
+        "onComplete": { "type": "string", "description": "Name of a Step." },
+        "retry": { "type": "integer" },
+        "timeout": { "type": "integer" },
+        "routes": { "type": "array", "items": { "$ref": "#/$defs/Route" } }
+      }
+    },
+    "Workflow": {
+      "type": "object",
+      "required": ["name", "channels", "steps", "loopOnFail"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "channels": { "type": "array", "items": { "$ref": "#/$defs/Channel" } },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/Step" } },
+        "loopOnFail": { "type": "array", "items": { "type": "string" }, "description": "Names of Steps." },
+        "maxLoops": { "type": "integer" }
+      }
+    },
+    "Trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "description": "schedule | webhook | manual | <custom>" },
+        "cron": { "type": "string" },
+        "timezone": { "type": "string" },
+        "method": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    },
+    "Task": {
+      "type": "object",
+      "required": ["name", "inputs", "outputs"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "workflow": { "type": "string", "description": "Name of a Workflow." },
+        "inputs": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Map of channel name -> default literal value." },
+        "outputs": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Map of channel name -> 'memory' or a file path." },
+        "trigger": { "$ref": "#/$defs/Trigger" }
+      }
+    }
+  }
+}

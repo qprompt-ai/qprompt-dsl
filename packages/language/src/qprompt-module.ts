@@ -2,6 +2,7 @@ import { IndentationAwareLexer, IndentationAwareTokenBuilder, type Module, injec
 import { createDefaultModule, createDefaultSharedModule, type DefaultSharedModuleContext, type LangiumServices, type LangiumSharedServices, type PartialLangiumServices } from 'langium/lsp';
 import { QpromptGeneratedModule, QpromptGeneratedSharedModule } from './generated/module.js';
 import { QpromptValidator, registerValidationChecks } from './qprompt-validator.js';
+import { QpromptValueConverter } from './qprompt-value-converter.js';
 
 /**
  * Declaration of custom services - add your own service classes here.
@@ -26,7 +27,8 @@ export type QpromptServices = LangiumServices & QpromptAddedServices
 export const QpromptModule: Module<QpromptServices, PartialLangiumServices & QpromptAddedServices> = {
     parser: {
         TokenBuilder: () => new IndentationAwareTokenBuilder(),
-        Lexer: (services) => new IndentationAwareLexer(services)
+        Lexer: (services) => new IndentationAwareLexer(services),
+        ValueConverter: () => new QpromptValueConverter()
     },
     validation: {
         QpromptValidator: () => new QpromptValidator()

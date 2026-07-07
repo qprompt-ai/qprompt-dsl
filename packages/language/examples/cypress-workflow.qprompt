@@ -137,23 +137,19 @@ resources:
         top_k: 3
 
 models:
-  // `mode` (finetuned/lora/base) describes which checkpoint a docker
-  // model runner serves, so it belongs here, not on each agent that
-  // happens to use it — a separate Model entry per checkpoint/port also
-  // lets different agents pick different variants of the same base
-  // model. (Only docker-served models for now; ollama/other runtime
-  // selection is future work.)
+  // Docker Compose's `models:` provisioning (docs.docker.com/ai/compose/
+  // models-and-compose) owns pulling/running the model and injecting its
+  // endpoint into whichever service references it — there's no port to
+  // declare. The finetuned vs. lora checkpoint distinction lives in the
+  // OCI tag itself, not a separate field, so each variant is its own
+  // Model entry with its own `model:` reference.
   qwen3_finetuned:
-    image: ai/qwen3:14B-Q6_K
-    serving_backend: vllm
-    port: 8080
-    mode: finetuned
+    model: ai/qwen3:14B-Q6_K-finetuned
+    context_size: 8192
 
   qwen3_lora:
-    image: ai/qwen3:14B-Q6_K
-    serving_backend: vllm
-    port: 8081
-    mode: lora
+    model: ai/qwen3:14B-Q6_K-lora
+    context_size: 8192
 
 agents:
 
